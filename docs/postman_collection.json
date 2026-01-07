@@ -1,0 +1,55 @@
+{
+  "info": {
+    "name": "SFM Firestore + Cloudinary",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "List FS Products",
+      "request": {
+        "method": "GET",
+        "url": "{{API_BASE}}/api/fs/products"
+      }
+    },
+    {
+      "name": "Create FS Product",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Authorization", "value": "Bearer {{FIREBASE_ID_TOKEN}}"},
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name_english\": \"Seer Fish\",\n  \"category\": \"sea_fish\",\n  \"price_per_kg\": 900,\n  \"stock_kg\": 10,\n  \"image_secure_url\": \"https://res.cloudinary.com/<cloud>/image/upload/v...\",\n  \"image_public_id\": \"samples/fish/vanjaram\"\n}"
+        },
+        "url": "{{API_BASE}}/api/fs/products"
+      }
+    },
+    {
+      "name": "Delete FS Product",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {"key": "Authorization", "value": "Bearer {{FIREBASE_ID_TOKEN}}"}
+        ],
+        "url": "{{API_BASE}}/api/fs/products/{{PRODUCT_ID}}"
+      }
+    },
+    {
+      "name": "Delete ALL FS Products",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {"key": "Authorization", "value": "Bearer {{FIREBASE_ID_TOKEN}}"}
+        ],
+        "url": "{{API_BASE}}/api/fs/products"
+      }
+    }
+  ],
+  "variable": [
+    { "key": "API_BASE", "value": "http://localhost:5000"},
+    { "key": "FIREBASE_ID_TOKEN", "value": "" },
+    { "key": "PRODUCT_ID", "value": "" }
+  ]
+}
