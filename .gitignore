@@ -1,7 +1,4 @@
-# env
-.env
-.env.*
-!.env.example
+
 # Logs
 logs
 *.log
@@ -17,13 +14,8 @@ dist/
 node_modules
 dist-ssr
 *.local
-.env
-.env.*
-*.env.local
-*.env.development
-*.env.production
-server/.env
-server/.env.*
+
+
 *.key
 *.pem
 
