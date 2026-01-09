@@ -28,25 +28,6 @@ const OrderTracking = () => {
     let unsubscribeHistory = null;
     let isActive = true;
 
-    const userOwnsOrder = (orderData) => {
-      const userId = user?.uid || user?.id;
-      const userPhone = user?.phone || user?.phoneNumber;
-      if (!orderData || !userId) return false;
-
-      // New schema uses `user_id`, but older docs can vary.
-      if (orderData.user_id && orderData.user_id === userId) return true;
-      if (orderData.uid && orderData.uid === userId) return true;
-      if (orderData.userId && orderData.userId === userId) return true;
-
-      // Phone-based fallback (only if present on both sides)
-      if (userPhone) {
-        if (orderData.customer_phone && orderData.customer_phone === userPhone) return true;
-        if (orderData.phone && orderData.phone === userPhone) return true;
-      }
-
-      return false;
-    };
-
     const setupListeners = async () => {
       try {
         // Wait for auth to load before checking user
@@ -75,8 +56,8 @@ const OrderTracking = () => {
           
           const orderData = { id: docSnap.id, ...docSnap.data() };
           
-          // Verify user owns this order (support legacy field names too)
-          if (!userOwnsOrder(orderData)) {
+          // Verify user owns this order
+          if (orderData.user_id !== (user.uid || user.id)) {
             console.error('[OrderTracking] Unauthorized access');
             navigate("/orders");
             return;
@@ -95,59 +76,34 @@ const OrderTracking = () => {
         
         // Set up real-time listener for order history
         // Removed orderBy to avoid requiring composite Firestore index; we'll sort client-side.
-        // Project uses `order_status_history` (see backend collection list).
-        // Keep backward-compat with older `order_history` if present.
-        const historyCollections = ['order_status_history', 'order_history'];
-        const historyUnsubs = [];
-        const historyAggregate = new Map();
-
-        historyCollections.forEach((collName) => {
-          const historyQuery = query(
-            collection(db, collName),
-            where('order_id', '==', id)
-          );
-
-          const unsub = onSnapshot(historyQuery, (snapshot) => {
-            if (!isActive) return;
-
-            snapshot.docChanges().forEach((change) => {
-              const key = `${collName}:${change.doc.id}`;
-              if (change.type === 'removed') {
-                historyAggregate.delete(key);
-              } else {
-                historyAggregate.set(key, { id: change.doc.id, ...change.doc.data() });
-              }
-            });
-
-            const history = Array.from(historyAggregate.values());
-            history.sort((a, b) => {
-              const toMs = (ts) => {
-                if (!ts) return 0;
-                if (ts?.toDate) return ts.toDate().getTime();
-                if (ts?.seconds) return ts.seconds * 1000;
-                if (typeof ts === 'number') return ts < 1e12 ? ts * 1000 : ts;
-                try { return new Date(ts).getTime(); } catch { return 0; }
-              };
-              return toMs(b.changed_at) - toMs(a.changed_at);
-            });
-            console.log('[OrderTracking] History updated (client-sorted):', history.length, 'entries');
-            if (isActive) setOrderHistory(history);
-          }, (error) => {
-            console.error('[OrderTracking] History listener error:', error);
-          });
-
-          historyUnsubs.push(unsub);
-        });
+        const historyQuery = query(
+          collection(db, 'order_history'),
+          where('order_id', '==', id)
+        );
         
-        unsubscribeHistory = () => {
-          historyUnsubs.forEach((u) => {
-            try {
-              u();
-            } catch (e) {
-              console.error('[OrderTracking] Cleanup error:', e);
-            }
+        unsubscribeHistory = onSnapshot(historyQuery, (snapshot) => {
+          if (!isActive) return;
+
+          const history = [];
+          snapshot.forEach((docSnap) => {
+            history.push({ id: docSnap.id, ...docSnap.data() });
           });
-        };
+          // Sort descending by changed_at
+          history.sort((a, b) => {
+            const toMs = (ts) => {
+              if (!ts) return 0;
+              if (ts?.toDate) return ts.toDate().getTime();
+              if (ts?.seconds) return ts.seconds * 1000;
+              if (typeof ts === 'number') return ts < 1e12 ? ts * 1000 : ts;
+              try { return new Date(ts).getTime(); } catch { return 0; }
+            };
+            return toMs(b.changed_at) - toMs(a.changed_at);
+          });
+          console.log('[OrderTracking] History updated (client-sorted):', history.length, 'entries');
+          if (isActive) setOrderHistory(history);
+        }, (error) => {
+          console.error('[OrderTracking] History listener error:', error);
+        });
       } catch (err) {
         console.error('[OrderTracking] Setup error:', err);
         if (isActive) {

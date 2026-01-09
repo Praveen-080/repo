@@ -1,6 +1,5 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, RecaptchaVerifier, signInWithPhoneNumber, setPersistence, browserLocalPersistence } from "firebase/auth";
-import { getAnalytics, isSupported as isAnalyticsSupported } from "firebase/analytics";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -14,17 +13,6 @@ const firebaseConfig = {
 // Guard against multiple initializations in dev (HMR)
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
-
-let analytics;
-if (typeof window !== "undefined") {
-  isAnalyticsSupported()
-    .then((ok) => {
-      if (ok) analytics = getAnalytics(app);
-    })
-    .catch(() => {
-      analytics = undefined;
-    });
-}
 
 // Set persistence to LOCAL (keeps user logged in across browser sessions)
 // Auth state persists until explicit logout - effectively 6+ months
@@ -41,5 +29,3 @@ if (typeof window !== 'undefined') {
 export { app, auth, RecaptchaVerifier, signInWithPhoneNumber };
 export default app;
 // Deprecated inline login helper removed; use phoneAuth.js abstractions instead.
-
-export { analytics };

@@ -42,7 +42,7 @@ export default function FsProducts() {
 
   const load = async () => {
     try { 
-      const products = await getProducts({ includeUnavailable: true }); 
+      const products = await getProducts(); 
       setList(products);
     } catch (err) { 
       console.error('Failed to load products:', err);

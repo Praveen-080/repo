@@ -29,17 +29,15 @@ const ProductDetail = () => {
   const fetchProduct = useCallback(async () => {
     try {
       const data = await getProductById(id);
-      const isAvailable = data ? (data.is_available ?? data.isAvailable) : false;
-      if (!data || !isAvailable) {
+      if (!data || !data.is_available) {
         notify.warning("Product unavailable or not found");
         navigate("/products");
-        setLoading(false);
-        return;
+        return setLoading(false);
       }
       setProduct(data);
     } catch (error) {
       console.error('Failed to load product:', error);
-      notify.error(error?.message || "Failed to load product");
+      notify.error("Failed to load product");
       navigate("/products");
     } finally {
       setLoading(false);
@@ -122,7 +120,7 @@ const ProductDetail = () => {
       title: "Proceeding to Checkout! ⚡",
       description: `${quantity}kg of ${product.name_english} - Redirecting to checkout...`,
     });
-    navigate("/checkout");
+    window.location.href = "/checkout";
   };
   if (loading) {
     return <div className="min-h-screen flex flex-col">
@@ -162,7 +160,7 @@ const ProductDetail = () => {
 
           {/* Product Details */}
           <div>
-            <Badge className="mb-2">{(product.category || '').replace("_", " ")}</Badge>
+            <Badge className="mb-2">{product.category.replace("_", " ")}</Badge>
             <h1 className="text-4xl font-bold mb-2">{product.name_english}</h1>
             <p className="text-xl text-muted-foreground mb-4">{product.name_tamil}</p>
             

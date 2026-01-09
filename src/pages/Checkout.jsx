@@ -17,8 +17,6 @@ import { useAuth } from "@/context/AuthContext";
 import { useSettings } from "@/context/SettingsContext";
 import { createOrder } from "@/services/firestoreOrders";
 import { getProductById } from "@/services/firestoreProducts";
-import { getFirestore, collection, doc, setDoc, serverTimestamp } from "firebase/firestore";
-import { app } from "@/integrations/firebase/firebase";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import iconUrl from "leaflet/dist/images/marker-icon.png";
@@ -256,26 +254,10 @@ const Checkout = () => {
       
       // Small delay to ensure Firestore write is complete before navigation
       await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Create a Wa-redirect doc that maps to this order.
-      // The /wa-order/:id route expects a Wa-redirect doc id.
-      let waRedirectId = order.id;
-      try {
-        const db = getFirestore(app, 'shakthifishmarket');
-        const waCol = collection(db, 'Wa-redirect');
-        const waDocRef = doc(waCol);
-        await setDoc(waDocRef, {
-          order_id: order.id,
-          created_at: serverTimestamp(),
-          source: 'checkout'
-        });
-        waRedirectId = waDocRef.id;
-      } catch (e) {
-        console.warn('[Checkout] Failed to create Wa-redirect doc, falling back to order id:', e?.message || e);
-      }
       
-      console.log('[Checkout] Order created, redirecting to WhatsApp:', `/wa-order/${waRedirectId}`);
-      navigate(`/wa-order/${waRedirectId}`, { replace: true });
+      // Ensure navigation happens without delay
+      console.log('[Checkout] Order created, redirecting to WhatsApp:', `/wa-order/${order.id}`);
+      navigate(`/wa-order/${order.id}`, { replace: true });
     } catch (error) {
       console.error('[Checkout] Order creation failed:', error);
       if (error instanceof z.ZodError) {
@@ -747,7 +729,7 @@ const Checkout = () => {
                         </div>
                         <div className="text-xs text-muted-foreground">
                           {item.cutType === "pieces" && item.cutOptions?.length > 0 
-                            ? `Cut: ${(item.cutOptions[0] || '').replace('_', ' ')}` 
+                            ? `Cut: ${item.cutOptions[0].replace('_', ' ')}` 
                             : item.cutType === "pieces" 
                             ? "Cut into pieces" 
                             : "Full piece"}

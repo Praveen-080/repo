@@ -24,120 +24,30 @@ const productsCollection = collection(db, 'products');
  */
 export async function getProducts(filter = {}) {
   try {
-    const wantsCategory = Boolean(filter.category);
-    const wantsAvailability = filter.isAvailable !== undefined;
-    const includeUnavailable = Boolean(filter.includeUnavailable);
-
-    const run = async (q, label) => {
-      const snapshot = await getDocs(q);
-      const products = [];
-      snapshot.forEach((snap) => {
-        products.push({ id: snap.id, ...snap.data() });
+    let q = query(productsCollection);
+    
+    // Apply filters
+    if (filter.category) {
+      q = query(q, where('category', '==', filter.category));
+    }
+    if (filter.isAvailable !== undefined) {
+      q = query(q, where('is_available', '==', filter.isAvailable));
+    }
+    
+    const snapshot = await getDocs(q);
+    const products = [];
+    
+    snapshot.forEach((doc) => {
+      products.push({
+        id: doc.id,
+        ...doc.data()
       });
-      console.log(`[FirestoreProducts] Loaded ${products.length} products (${label})`);
-      return products;
-    };
-
-    // We support both schemas:
-    // - snake_case: is_available
-    // - camelCase: isAvailable
-    // Also, some projects need a composite index for (category + is_*). If missing,
-    // we fall back to a simpler query and filter client-side.
-
-    // 1) Best-case: category + availability on snake_case
-    if (wantsCategory && wantsAvailability) {
-      try {
-        return await run(
-          query(
-            productsCollection,
-            where('category', '==', filter.category),
-            where('is_available', '==', filter.isAvailable)
-          ),
-          'category + is_available'
-        );
-      } catch (e) {
-        console.warn('[FirestoreProducts] Query failed (category + is_available), trying alternatives:', e?.message || e);
-      }
-    }
-
-    // 2) Best-case: category + availability on camelCase
-    if (wantsCategory && wantsAvailability) {
-      try {
-        return await run(
-          query(
-            productsCollection,
-            where('category', '==', filter.category),
-            where('isAvailable', '==', filter.isAvailable)
-          ),
-          'category + isAvailable'
-        );
-      } catch (e) {
-        console.warn('[FirestoreProducts] Query failed (category + isAvailable), falling back:', e?.message || e);
-      }
-    }
-
-    // 3) Availability-only (snake_case)
-    if (!wantsCategory && wantsAvailability) {
-      try {
-        return await run(
-          query(productsCollection, where('is_available', '==', filter.isAvailable)),
-          'is_available'
-        );
-      } catch (e) {
-        console.warn('[FirestoreProducts] Query failed (is_available), trying isAvailable:', e?.message || e);
-      }
-    }
-
-    // 4) Availability-only (camelCase)
-    if (!wantsCategory && wantsAvailability) {
-      try {
-        return await run(
-          query(productsCollection, where('isAvailable', '==', filter.isAvailable)),
-          'isAvailable'
-        );
-      } catch (e) {
-        console.warn('[FirestoreProducts] Query failed (isAvailable), falling back to full scan:', e?.message || e);
-      }
-    }
-
-    // 5) Category-only, then filter availability in memory
-    if (wantsCategory) {
-      const base = await run(
-        query(productsCollection, where('category', '==', filter.category)),
-        'category only'
-      );
-      if (includeUnavailable) return base;
-      if (!wantsAvailability) {
-        return base.filter((p) => {
-          const val = p.is_available ?? p.isAvailable;
-          return Boolean(val) === true;
-        });
-      }
-
-      return base.filter((p) => {
-        const val = p.is_available ?? p.isAvailable;
-        return Boolean(val) === Boolean(filter.isAvailable);
-      });
-    }
-
-    // 6) Full scan, filter client-side
-    const base = await run(query(productsCollection), 'full scan');
-    return base.filter((p) => {
-      if (includeUnavailable) {
-        // skip availability filtering entirely
-      } else if (wantsAvailability) {
-        const val = p.is_available ?? p.isAvailable;
-        if (Boolean(val) !== Boolean(filter.isAvailable)) return false;
-      } else {
-        // Default behavior: hide unavailable products for user-facing pages
-        const val = p.is_available ?? p.isAvailable;
-        if (Boolean(val) !== true) return false;
-      }
-      if (wantsCategory && p.category !== filter.category) return false;
-      return true;
     });
+    
+    console.log(`[FirestoreProducts] Loaded ${products.length} products`);
+    return products;
   } catch (error) {
-    console.error('[FirestoreProducts] getProducts failed:', error);
+    console.error('[FirestoreProducts] getProducts failed:', error.message);
     throw error;
   }
 }
@@ -149,11 +59,7 @@ export async function getProducts(filter = {}) {
  */
 export async function getProductById(productId) {
   try {
-    // Route params can occasionally include query/hash fragments (e.g. from bad links).
-    // Firestore doc IDs must not include '/' and should be a plain string.
-    const safeId = String(productId || '').split('?')[0].split('#')[0];
-    if (!safeId) return null;
-    const productRef = doc(db, 'products', safeId);
+    const productRef = doc(db, 'products', productId);
     const productSnap = await getDoc(productRef);
     
     if (productSnap.exists()) {
@@ -183,10 +89,8 @@ export async function createProduct(productData) {
       name_tanglish: productData.name_tanglish || '',
       category: productData.category || '',
       price_per_kg: Number(productData.price_per_kg) || 0,
-      stock_type: productData.stock_type || 'kg',
       stock_kg: Number(productData.stock_kg) || 0,
-      count: Number(productData.count) || 0,
-      is_available: productData.is_available === undefined ? true : Boolean(productData.is_available),
+      is_available: Boolean(productData.is_available),
       image_url: productData.image_url || '',
       image_public_id: productData.image_public_id || '',
       description: productData.description || '',
@@ -230,12 +134,6 @@ export async function updateProduct(productId, updates) {
     }
     if (updateData.stock_kg !== undefined) {
       updateData.stock_kg = Number(updateData.stock_kg);
-    }
-    if (updateData.count !== undefined) {
-      updateData.count = Number(updateData.count);
-    }
-    if (updateData.stock_type !== undefined) {
-      updateData.stock_type = String(updateData.stock_type);
     }
     if (updateData.is_available !== undefined) {
       updateData.is_available = Boolean(updateData.is_available);

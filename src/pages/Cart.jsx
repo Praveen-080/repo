@@ -124,7 +124,7 @@ const Cart = () => {
                           <p>Quantity: {item.quantity}kg</p>
                           <p>Cut: {cutTypeLabels[item.cutType]}
                             {item.cutType === "pieces" && item.cutOptions?.length > 0 
-                              ? ` (${(item.cutOptions[0] || '').replace('_', ' ')})` 
+                              ? ` (${item.cutOptions[0].replace('_', ' ')})` 
                               : ""}
                           </p>
                           <p>Cleaning: {item.needsCleaning ? "Yes" : "No"}</p>

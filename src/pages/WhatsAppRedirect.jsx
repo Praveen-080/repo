@@ -5,7 +5,7 @@ import { Footer } from "@/components/Footer";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { getOrderById } from "@/services/firestoreOrders";
-import { getWhatsAppNumber, getWhatsAppRedirectDoc } from "@/services/firestoreWhatsApp";
+import { getWhatsAppNumber } from "@/services/firestoreWhatsApp";
 function buildReceiptHtml(order) {
   const created = order.created_at?.toDate ? order.created_at.toDate() : new Date(order.created_at || Date.now());
   const dateStr = created.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
@@ -106,30 +106,19 @@ export default function WhatsAppRedirect() {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [whatsappNumber, setWhatsappNumber] = useState('919943328133'); // Default fallback
-  const [autoRedirectToOrders, setAutoRedirectToOrders] = useState(false);
 
   // Load order and WhatsApp number from Firestore
   useEffect(() => {
     const loadData = async () => {
       try {
         setLoading(true);
-
-        // The /wa-order/:id route uses a Wa-redirect document id.
-        // Resolve it to the actual order id when possible.
-        const redirectDoc = await getWhatsAppRedirectDoc(id).catch(() => null);
-        const resolvedOrderId =
-          redirectDoc?.order_id ||
-          redirectDoc?.orderId ||
-          redirectDoc?.orderID ||
-          redirectDoc?.order ||
-          id;
-
-        // Load order + WhatsApp number in parallel
+        
+        // Load both order and WhatsApp number in parallel
         const [orderData, waNumber] = await Promise.all([
-          getOrderById(resolvedOrderId),
+          getOrderById(id),
           getWhatsAppNumber()
         ]);
-
+        
         setOrder(orderData);
         
         // Set WhatsApp number from Wa-redirect collection
@@ -249,46 +238,50 @@ export default function WhatsAppRedirect() {
 
   useEffect(() => {
     if (!order || !whatsappNumber || !message) return;
-
-    // Prevent repeated auto-open loops on refresh.
-    const redirectKey = `sfm_wa_opened_${order.id}`;
+    
+    // Check if already redirected for this order
+    const redirectKey = `sfm_wa_redirected_${order.id}`;
     if (sessionStorage.getItem(redirectKey)) {
-      console.log('[WhatsApp] Already auto-opened for this order; waiting for user.');
+      console.log('[WhatsApp] Already redirected for this order, navigating to orders');
+      navigate('/orders', { replace: true });
       return;
     }
-
+    
     const url = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
+
     console.log('[WhatsApp] Constructed URL:', url);
     console.log('[WhatsApp] Message length:', message.length, 'characters');
 
-    // Try to open WhatsApp once. Do NOT auto-navigate away immediately,
-    // otherwise the user may see "Order not found" or lose the page.
+    // Mark as redirected
+    sessionStorage.setItem(redirectKey, '1');
+
+    // Attempt 1: normal navigation (most reliable when user gesture recently happened)
     const t1 = setTimeout(() => {
       try {
         if (document.visibilityState === 'visible') {
-          console.log('[WhatsApp] Auto-opening WhatsApp via window.open');
-          window.open(url, '_blank', 'noopener,noreferrer');
-          sessionStorage.setItem(redirectKey, '1');
-          setAutoRedirectToOrders(true);
+          console.log('[WhatsApp] Attempt 1: Using window.location.href');
+          window.location.href = url;
         }
       } catch (e) {
-        console.warn('[WhatsApp] Auto-open failed (popup blocked?)', e);
+        console.warn('[WhatsApp] direct href failed, fallback to window.open', e);
+        try { 
+          console.log('[WhatsApp] Attempt 1 fallback: Using window.open');
+          window.open(url, '_blank'); 
+        } catch { /* noop: pop-up blocked */ }
       }
     }, 300);
 
+    // After WhatsApp redirect, navigate to orders page
+    const t4 = setTimeout(() => {
+      console.log('[WhatsApp] Redirecting to orders page');
+      navigate('/orders', { replace: true });
+    }, 2000);
+
     return () => {
       clearTimeout(t1);
+      clearTimeout(t4);
     };
-  }, [order, message, whatsappNumber]);
-
-  // Once we attempted to open WhatsApp, wait a bit then go to orders.
-  useEffect(() => {
-    if (!autoRedirectToOrders) return;
-    const t = setTimeout(() => {
-      navigate('/orders', { replace: true });
-    }, 3500);
-    return () => clearTimeout(t);
-  }, [autoRedirectToOrders, navigate]);
+  }, [order, message, whatsappNumber, navigate]);
 
   // Show loading state
   if (loading) {

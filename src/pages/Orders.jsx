@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Package } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { getFirestore, collection, query, where, onSnapshot, orderBy } from "firebase/firestore";
+import { getFirestore, collection, query, where, onSnapshot } from "firebase/firestore";
 import { app } from "@/integrations/firebase/firebase";
 
 const db = getFirestore(app, 'shakthifishmarket');
@@ -72,102 +72,62 @@ const Orders = () => {
           return;
         }
         
-        const userId = user.uid || user.id;
-        const userPhone = user.phone || user.phoneNumber;
-
-        console.log('[Orders] Setting up listener for user:', userId);
+        console.log('[Orders] Setting up listener for user:', user.uid || user.id);
         if (isActive) {
           setLoading(true);
         }
-
-        // Orders are stored with `user_id` (see `createOrder`).
-        // In older data, it might be stored with different field names.
-        const orderFilters = [
-          { label: 'user_id', field: 'user_id', value: userId },
-          { label: 'uid', field: 'uid', value: userId },
-          { label: 'userId', field: 'userId', value: userId },
-          ...(userPhone
-            ? [
-                { label: 'customer_phone', field: 'customer_phone', value: userPhone },
-                { label: 'phone', field: 'phone', value: userPhone }
-              ]
-            : [])
-        ].filter((f) => Boolean(f.value));
-
-        // Merge results from multiple queries (Firestore doesn't support OR here).
-        // Dedup by doc id.
-        const unsubscribers = [];
-        const aggregate = new Map();
-        const updateFromAggregate = () => {
-          const ordersData = Array.from(aggregate.values());
-          // Sort client-side by created_at desc
-          ordersData.sort((a, b) => {
-            const toMs = (ts) => {
-              if (!ts) return 0;
-              if (ts.toDate) return ts.toDate().getTime();
-              if (typeof ts === 'number') return ts < 1e12 ? ts * 1000 : ts;
-              if (ts.seconds !== undefined) return ts.seconds * 1000;
-              try { return new Date(ts).getTime(); } catch { return 0; }
-            };
-            return toMs(b.created_at) - toMs(a.created_at);
-          });
-
-          console.log('[Orders] Real-time update:', ordersData.length, 'orders loaded');
+        // Set up real-time listener
+        const q = query(
+          collection(db, 'orders'),
+          where('user_id', '==', user.uid || user.id)
+        );
+        
+        unsubscribe = onSnapshot(
+        q, 
+        (snapshot) => {
+          try {
+            const ordersData = [];
+            snapshot.forEach((doc) => {
+              const data = doc.data();
+              ordersData.push({
+                id: doc.id,
+                ...data
+              });
+              console.log('[Orders] Order:', doc.id, 'Status:', data.order_status, 'Total:', data.grand_total);
+            });
+            // Sort client-side by created_at desc
+            ordersData.sort((a, b) => {
+              const toMs = (ts) => {
+                if (!ts) return 0;
+                if (ts.toDate) return ts.toDate().getTime();
+                if (typeof ts === 'number') return ts < 1e12 ? ts * 1000 : ts;
+                if (ts.seconds !== undefined) return ts.seconds * 1000;
+                try { return new Date(ts).getTime(); } catch { return 0; }
+              };
+              return toMs(b.created_at) - toMs(a.created_at);
+            });
+            
+            console.log('[Orders] Real-time update:', ordersData.length, 'orders loaded');
+            if (isActive) {
+              setOrders(ordersData || []);
+              setLoading(false);
+            }
+          } catch (err) {
+            console.error('[Orders] Error processing snapshot:', err);
+            if (isActive) {
+              setOrders([]);
+              setLoading(false);
+            }
+          }
+        }, 
+        (error) => {
+          console.error('[Orders] Listener error:', error);
           if (isActive) {
-            setOrders(ordersData);
+            setOrders([]);
             setLoading(false);
           }
-        };
-
-        orderFilters.forEach((f) => {
-          const q = query(
-            collection(db, 'orders'),
-            where(f.field, '==', f.value),
-            orderBy('created_at', 'desc')
-          );
-
-          const unsub = onSnapshot(
-            q,
-            (snapshot) => {
-              try {
-                snapshot.docChanges().forEach((change) => {
-                  if (change.type === 'removed') {
-                    aggregate.delete(change.doc.id);
-                    return;
-                  }
-                  aggregate.set(change.doc.id, { id: change.doc.id, ...change.doc.data() });
-                });
-                updateFromAggregate();
-              } catch (err) {
-                console.error('[Orders] Error processing snapshot:', err);
-                if (isActive) {
-                  setOrders([]);
-                  setLoading(false);
-                }
-              }
-            },
-            (error) => {
-              console.error(`[Orders] Listener error (${f.label}):`, error);
-              // If one query errors (e.g., missing index), don't kill the page; keep trying others.
-              if (orderFilters.length === 1 && isActive) {
-                setOrders([]);
-                setLoading(false);
-              }
-            }
-          );
-
-          unsubscribers.push(unsub);
-        });
-
-        unsubscribe = () => {
-          unsubscribers.forEach((u) => {
-            try {
-              u();
-            } catch {
-              // no-op
-            }
-          });
-        };
+        }
+      );
       } catch (err) {
         console.error('[Orders] Setup error:', err);
         if (isActive) {

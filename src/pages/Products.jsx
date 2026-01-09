@@ -12,7 +12,6 @@ const Products = () => {
   const [products, setProducts] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
   const [cartCount, setCartCount] = useState(0);
@@ -66,7 +65,6 @@ const Products = () => {
 
   const fetchProducts = useCallback(async () => {
     setLoading(true);
-    setLoadError("");
     try {
       // Load products from Firestore
       const filter = selectedCategory === "all" 
@@ -76,9 +74,7 @@ const Products = () => {
       const data = await getProducts(filter);
       setProducts(data);
     } catch (error) {
-      const msg = error?.message || String(error);
       console.error('Failed to load products:', error);
-      setLoadError(msg);
       setProducts([]);
     } finally {
       setLoading(false);
@@ -112,21 +108,6 @@ const Products = () => {
       
       <main className="container py-8 flex-1">
         <h1 className="text-4xl font-bold mb-6">Our Products</h1>
-
-        {loadError && (
-          <div className="mb-6 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
-            <div className="font-medium">Failed to load products</div>
-            <div className="text-muted-foreground mt-1 wrap-break-word">{loadError}</div>
-            <div className="mt-3">
-              <button
-                onClick={fetchProducts}
-                className="text-primary hover:underline"
-              >
-                Retry
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Search Bar */}
         <div className="mb-6">
