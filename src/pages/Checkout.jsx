@@ -59,6 +59,14 @@ const Checkout = () => {
   // Flag reserved for future manual vs auto logic (currently not used)
   // const [addressEdited, setAddressEdited] = useState(false);
   const lastGeocodeKey = useRef("");
+
+  const toYesNoFlag = useCallback((value) => {
+    if (value === true) return true;
+    if (value === false) return false;
+    if (value == null) return false;
+    const s = String(value).trim().toLowerCase();
+    return s === "yes" || s === "y" || s === "true" || s === "1";
+  }, []);
   useEffect(() => {
     // Wait for auth to load before checking
     if (authLoading) return;
@@ -103,12 +111,50 @@ const Checkout = () => {
       quantity: 1,
       cutType: "no_cut",
       cutOptions: [],
+      squarePieceSelected: false,
       needsCleaning: false,
       subtotal: (it.pricePerKg || 0) * (it.quantity || 1),
       ...it,
     }));
     setCartItems(normalized);
   };
+
+  // Hydrate cart items with latest product fields from Firestore (e.g., squarepiece yes/no).
+  useEffect(() => {
+    if (!user || !Array.isArray(cartItems) || cartItems.length === 0) return;
+    let cancelled = false;
+
+    (async () => {
+      const hydrated = await Promise.all(
+        cartItems.map(async (it) => {
+          if (!it?.productId) return it;
+          try {
+            const product = await getProductById(it.productId);
+            if (!product) return it;
+            return {
+              ...it,
+              squarepiece: product.squarepiece,
+            };
+          } catch {
+            return it;
+          }
+        })
+      );
+
+      if (cancelled) return;
+      const changed = hydrated.some((it, i) => (it?.squarepiece ?? null) !== (cartItems[i]?.squarepiece ?? null));
+      if (changed) {
+        setCartItems(hydrated);
+        persistCart(hydrated);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally exclude persistCart identity changes; it is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, cartItems]);
 
   // Helpers
   const INR = useMemo(() => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }), []);
@@ -156,6 +202,31 @@ const Checkout = () => {
       return next;
     });
   };
+
+  // If a cart item currently has square_piece selected but the product now disallows it,
+  // clear the selection to avoid sending invalid options in the order.
+  useEffect(() => {
+    if (!Array.isArray(cartItems) || cartItems.length === 0) return;
+    const next = cartItems.map((it) => {
+      const allowsSquare = toYesNoFlag(it.squarepiece);
+      const selected = it.cutOptions?.[0] === "square_piece";
+      if (!allowsSquare) {
+        const patch = {};
+        if (selected) patch.cutOptions = [];
+        if (it.squarePieceSelected) patch.squarePieceSelected = false;
+        return Object.keys(patch).length ? { ...it, ...patch } : it;
+      }
+      return it;
+    });
+    const changed = next.some((it, i) =>
+      (it.cutOptions?.[0] || "") !== (cartItems[i]?.cutOptions?.[0] || "") ||
+      Boolean(it.squarePieceSelected) !== Boolean(cartItems[i]?.squarePieceSelected)
+    );
+    if (changed) {
+      setCartItems(next);
+      persistCart(next);
+    }
+  }, [cartItems, persistCart, toYesNoFlag]);
 
   const removeItem = (idx) => {
     setCartItems((prev) => {
@@ -506,19 +577,34 @@ const Checkout = () => {
                                 />
                                 2 piece
                               </label>
-                              <label className="flex items-center gap-2 text-sm">
-                                <input
-                                  type="radio"
-                                  name={`cut-option-${idx}`}
-                                  checked={item.cutOptions?.[0] === "square_piece"}
-                                  onChange={() => updateItem(idx, { cutOptions: ["square_piece"] })}
-                                />
-                                Square piece
-                              </label>
+                              {toYesNoFlag(item.squarepiece) && (
+                                <label className="flex items-center gap-2 text-sm">
+                                  <input
+                                    type="radio"
+                                    name={`cut-option-${idx}`}
+                                    checked={item.cutOptions?.[0] === "square_piece"}
+                                    onChange={() => updateItem(idx, { cutOptions: ["square_piece"] })}
+                                  />
+                                  Square piece
+                                </label>
+                              )}
                             </div>
                           )}
                         </div>
                       </div>
+                      {toYesNoFlag(item.squarepiece) && (
+                        <div>
+                          <Label className="mb-2 block">Square Piece</Label>
+                          <div className="flex items-center gap-2 mt-2">
+                            <Checkbox
+                              id={`squarepiece-${idx}`}
+                              checked={!!item.squarePieceSelected}
+                              onCheckedChange={(v) => updateItem(idx, { squarePieceSelected: Boolean(v) })}
+                            />
+                            <Label htmlFor={`squarepiece-${idx}`} className="text-sm font-normal">Square piece</Label>
+                          </div>
+                        </div>
+                      )}
                       <div>
                         <Label className="mb-2 block">Cleaning</Label>
                         <div className="flex items-center gap-2 mt-2">
@@ -733,6 +819,7 @@ const Checkout = () => {
                             : item.cutType === "pieces" 
                             ? "Cut into pieces" 
                             : "Full piece"}
+                          {item.squarePieceSelected ? " • Square piece" : ""}
                           {item.needsCleaning ? " • Cleaned" : ""}
                         </div>
                       </div>

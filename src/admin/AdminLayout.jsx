@@ -1,16 +1,20 @@
 import React from "react";
-import { Outlet, NavLink } from "react-router-dom";
+import { Outlet, NavLink, useLocation } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
-import { Shield, Package, ClipboardList, Layers, BarChart3, Headphones, Truck, Settings } from "lucide-react";
+import { Shield, Package, ClipboardList, BarChart3, Headphones, Truck, Settings, LayoutDashboard, Boxes } from "lucide-react";
 import AdminLoginForm from "@/components/AdminLoginForm";
-import { Link } from "react-router-dom";
+
+const SCROLL_Y_STATE_KEY = "__preserveScrollY";
 
 const NavItem = ({ to, icon, label }) => (
   <NavLink
     to={to}
-    className={({ isActive }) => `flex items-center gap-2 px-3 py-2 rounded-md text-sm ${isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"}`}
+    state={{ [SCROLL_Y_STATE_KEY]: typeof window !== "undefined" ? window.scrollY : 0 }}
+    className={({ isActive }) =>
+      `flex items-center gap-2 px-3 py-2 rounded-md text-sm ${isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"}`
+    }
   >
     <span className="h-4 w-4 inline-flex items-center justify-center">{icon}</span>
     {label}
@@ -19,6 +23,7 @@ const NavItem = ({ to, icon, label }) => (
 
 export default function AdminLayout() {
   const { adminUser, setShowAdminLogin, ready } = useAdminAuth();
+  const location = useLocation();
 
   React.useEffect(() => {
     if (!ready) return; // wait until storage/cookie checked
@@ -28,6 +33,17 @@ export default function AdminLayout() {
       setShowAdminLogin(false);
     }
   }, [adminUser, ready, setShowAdminLogin]);
+
+  // Preserve scroll position when navigating via the admin sidebar.
+  React.useEffect(() => {
+    const nextScrollY = location?.state?.[SCROLL_Y_STATE_KEY];
+    if (typeof nextScrollY !== "number") return;
+
+    // Defer until after the new route content renders.
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: nextScrollY, left: 0, behavior: "auto" });
+    });
+  }, [location]);
 
   // While checking session, avoid rendering dashboard content
   if (!ready) {
