@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ShoppingCart, User, Fish, LogOut, Shield, Menu, X } from "lucide-react";
@@ -14,6 +14,11 @@ export const Navbar = ({
   const { user, logout, setShowLogin } = useAuth();
   const { adminUser, logout: adminLogout, setShowAdminLogin } = useAdminAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Close mobile menu on any navigation (back/forward/programmatic/link clicks).
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
   
   // Check if on admin pages
   const isAdminPage = location.pathname.startsWith('/admin');
@@ -45,7 +50,7 @@ export const Navbar = ({
   };
   return (
     <>
-      <nav className="sticky top-0 z-50 w-full border-b bg-card/95 backdrop-blur supports-backdrop-filter:bg-card/80">
+      <nav className="fixed top-0 z-50 w-full border-b bg-card/95 backdrop-blur supports-backdrop-filter:bg-card/80 md:sticky">
         <div className="container flex h-16 items-center justify-between px-3 sm:px-4">
           {/* Logo */}
           <Link to="/" className="flex items-center gap-2 min-w-0 shrink-0">
@@ -155,6 +160,9 @@ export const Navbar = ({
           </div>
         </div>
       </nav>
+
+      {/* Spacer so fixed navbar doesn't cover page content on mobile */}
+      <div className="h-16 md:hidden" />
 
       {/* Mobile Menu Overlay */}
       {mobileMenuOpen && (
