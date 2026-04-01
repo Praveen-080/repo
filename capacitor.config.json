@@ -1,0 +1,12 @@
+{
+  "appId": "com.sakthi.fishmarket",
+  "appName": "FishApp",
+  "webDir": "dist",
+  "plugins": {
+    "GoogleAuth": {
+      "scopes": ["profile", "email"],
+      "serverClientId": "697772392345-npci85spboio8aefr5com0vh8984jt0d.apps.googleusercontent.com",
+      "forceCodeForRefreshToken": true
+    }
+  }
+}

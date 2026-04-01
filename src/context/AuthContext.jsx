@@ -8,8 +8,51 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
-  signInWithPopup
+  signInWithPopup,
+  signInWithCredential
 } from 'firebase/auth';
+import { Capacitor } from '@capacitor/core';
+import { GoogleAuth } from '@southdevs/capacitor-google-auth';
+import { resolveGoogleWebClientId } from '@/lib/googleAuthConfig';
+
+const safeStorage = {
+  get(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // ignore
+    }
+  },
+  remove(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // ignore
+    }
+  },
+  getJSON(key) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  },
+  setJSON(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      // ignore
+    }
+  },
+};
 
 const AuthContext = createContext(null);
 
@@ -19,6 +62,79 @@ export function AuthProvider({ children }) {
   const [authLoading, setAuthLoading] = useState(true);
   // OTP confirmation state handled inside phoneAuth service; we only track UI flags here
   const [otpSessionStarted, setOtpSessionStarted] = useState(false);
+
+  const finalizeGoogleAuth = useCallback(async (firebaseUser, token) => {
+    console.log("[Auth] finalizeGoogleAuth started", {
+      uid: firebaseUser?.uid,
+      hasToken: !!token,
+    });
+
+    try {
+      console.log("[Auth] Firestore user lookup started", { uid: firebaseUser?.uid });
+      const userData = await checkUserExists(firebaseUser.uid);
+      console.log("[Auth] Firestore user lookup completed", {
+        uid: firebaseUser?.uid,
+        userFound: !!(userData && userData.uid),
+      });
+
+      if (userData && userData.uid) {
+        console.log("[Auth] Existing user branch started", { uid: userData.uid });
+        // Existing user - just log them in
+        await updateUserLastLogin(firebaseUser.uid);
+
+        const u = {
+          uid: userData.uid,
+          email: userData.email || firebaseUser.email,
+          phone: userData.phone || '',
+          name: userData.name || firebaseUser.displayName || '',
+          token,
+          profile_completed: userData.profile_completed
+        };
+
+        safeStorage.setJSON("sfm_current_user", u);
+        safeStorage.set("sfm_user_id_token", token);
+        setUser(u);
+        setShowLogin(false);
+        console.log("[Auth] Existing user branch success", {
+          uid: u.uid,
+          profileCompleted: !!u.profile_completed,
+        });
+        return u;
+      }
+
+      // New user - redirect to profile completion for name and phone
+      const newUserData = {
+        uid: firebaseUser.uid,
+        email: firebaseUser.email,
+        name: firebaseUser.displayName || '',
+        phone: '',
+        created_at: new Date().toISOString(),
+        last_login: new Date().toISOString(),
+        profile_completed: false
+      };
+
+      console.log("[Auth] New user branch started", { uid: newUserData.uid });
+      await createUser(newUserData);
+      console.log("[Auth] New user document created", { uid: newUserData.uid });
+
+      // Store temp user for profile completion
+      safeStorage.setJSON("sfm_temp_user", {
+        uid: newUserData.uid,
+        email: newUserData.email,
+        phone: '',
+        name: newUserData.name,
+        token,
+        needsProfileCompletion: true
+      });
+      safeStorage.set("sfm_user_id_token", token);
+      console.log("[Auth] PROFILE_INCOMPLETE raised for new Google user", { uid: newUserData.uid });
+
+      throw new Error("PROFILE_INCOMPLETE");
+    } catch (error) {
+      console.error("[Auth] finalizeGoogleAuth failed:", error);
+      throw error;
+    }
+  }, []);
 
   // Restore auth state from Firebase + localStorage on mount
   useEffect(() => {
@@ -31,16 +147,12 @@ export function AuthProvider({ children }) {
         console.log('[Auth] Firebase user detected:', firebaseUser.uid);
         
         // Check if we have user data in localStorage
-        const raw = localStorage.getItem("sfm_current_user");
-        if (raw) {
-          const storedUser = JSON.parse(raw);
-          // Verify the stored user matches Firebase user
-          if (storedUser.uid === firebaseUser.uid) {
-            console.log('[Auth] Restored user from localStorage:', storedUser.uid);
-            setUser(storedUser);
-            setAuthLoading(false);
-            return;
-          }
+        const storedUser = safeStorage.getJSON("sfm_current_user");
+        if (storedUser?.uid && storedUser.uid === firebaseUser.uid) {
+          console.log('[Auth] Restored user from localStorage:', storedUser.uid);
+          setUser(storedUser);
+          setAuthLoading(false);
+          return;
         }
         
         // If no valid localStorage data, fetch from Firestore
@@ -56,8 +168,8 @@ export function AuthProvider({ children }) {
               role: userData.role || 'user',
               token
             };
-            localStorage.setItem("sfm_current_user", JSON.stringify(u));
-            localStorage.setItem("sfm_user_id_token", token);
+            safeStorage.setJSON("sfm_current_user", u);
+            safeStorage.set("sfm_user_id_token", token);
             setUser(u);
             console.log('[Auth] User data fetched and restored:', u.uid);
           }
@@ -67,15 +179,15 @@ export function AuthProvider({ children }) {
       } else {
         // No Firebase user signed in
         console.log('[Auth] No Firebase user signed in');
-        localStorage.removeItem('sfm_current_user');
-        localStorage.removeItem('sfm_user_id_token');
+        safeStorage.remove('sfm_current_user');
+        safeStorage.remove('sfm_user_id_token');
         setUser(null);
       }
       setAuthLoading(false);
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [finalizeGoogleAuth]);
 
   // Centralized function to set up reCAPTCHA. This should be called in the component
   // where the reCAPTCHA container div exists.
@@ -90,7 +202,7 @@ export function AuthProvider({ children }) {
 
   const loginWithPassword = useCallback(async ({ email, password }) => {
     const u = authenticateWithPassword({ email, password });
-    localStorage.setItem("sfm_current_user", JSON.stringify(u));
+    safeStorage.setJSON("sfm_current_user", u);
     setUser(u);
     setShowLogin(false);
     return u;
@@ -123,20 +235,20 @@ export function AuthProvider({ children }) {
         
         if (!isProfileComplete) {
           // Store as temp user and redirect to profile completion
-          localStorage.setItem("sfm_temp_user", JSON.stringify({
+          safeStorage.setJSON("sfm_temp_user", {
             uid: u.uid,
             email: u.email,
             phone: u.phone || '',
             name: u.name || '',
             token,
             needsProfileCompletion: true
-          }));
-          localStorage.setItem("sfm_user_id_token", token);
+          });
+          safeStorage.set("sfm_user_id_token", token);
           throw new Error("PROFILE_INCOMPLETE");
         }
         
-        localStorage.setItem("sfm_current_user", JSON.stringify(u));
-        localStorage.setItem("sfm_user_id_token", token);
+        safeStorage.setJSON("sfm_current_user", u);
+        safeStorage.set("sfm_user_id_token", token);
         setUser(u);
         setShowLogin(false);
         return u;
@@ -187,8 +299,8 @@ export function AuthProvider({ children }) {
         profile_completed: userData.profile_completed
       };
       
-      localStorage.setItem("sfm_current_user", JSON.stringify(u));
-      localStorage.setItem("sfm_user_id_token", token);
+      safeStorage.setJSON("sfm_current_user", u);
+      safeStorage.set("sfm_user_id_token", token);
       setUser(u);
       setShowLogin(false);
       return u;
@@ -206,75 +318,175 @@ export function AuthProvider({ children }) {
 
   // Google Sign In
   const loginWithGoogle = useCallback(async () => {
+    console.log("Google login started");
+    const isNativeAndroid = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+    console.log("Platform detected", {
+      platform: Capacitor.getPlatform(),
+      isNativePlatform: Capacitor.isNativePlatform(),
+      isNativeAndroid,
+    });
+
     try {
+      if (isNativeAndroid) {
+        console.log("Using native Android login");
+        const { clientId: googleClientId, source } = resolveGoogleWebClientId();
+        if (source !== 'env') {
+          console.warn("[Auth] Missing VITE_GOOGLE_WEB_CLIENT_ID. Using fallback client ID.");
+        }
+        console.log("[Auth] GoogleAuth native initialize payload", {
+          clientIdSource: source,
+          hasClientId: !!googleClientId,
+        });
+
+        try {
+          await GoogleAuth.initialize({
+            clientId: googleClientId,
+            scopes: ['profile', 'email'],
+            grantOfflineAccess: true,
+          });
+          console.log('[Auth] GoogleAuth.initialize success');
+        } catch (initializeError) {
+          console.error('[Auth] GoogleAuth.initialize failed:', initializeError);
+          throw initializeError;
+        }
+
+        let nativeUser;
+        try {
+          nativeUser = await GoogleAuth.signIn();
+        } catch (nativeSignInError) {
+          console.error('[Auth] Native Google sign-in failed:', nativeSignInError);
+          throw nativeSignInError;
+        }
+
+        console.log("Google login response received", nativeUser);
+
+        const nativeAuth = nativeUser?.authentication || nativeUser?.result?.authentication || null;
+
+        const idToken =
+          nativeAuth?.idToken ||
+          nativeUser?.idToken ||
+          nativeUser?.result?.idToken ||
+          null;
+        const accessToken =
+          nativeAuth?.accessToken ||
+          nativeUser?.accessToken ||
+          nativeUser?.result?.accessToken ||
+          null;
+        const serverAuthCode = nativeUser?.serverAuthCode || nativeUser?.result?.serverAuthCode || null;
+
+        console.log("ID token extracted", {
+          hasIdToken: !!idToken,
+          hasAccessToken: !!accessToken,
+          hasServerAuthCode: !!serverAuthCode,
+          tokenSource: idToken
+            ? (nativeAuth?.idToken
+              ? 'authentication.idToken'
+              : (nativeUser?.idToken ? 'idToken' : 'result.idToken'))
+            : (accessToken
+              ? (nativeAuth?.accessToken
+                ? 'authentication.accessToken'
+                : (nativeUser?.accessToken ? 'accessToken' : 'result.accessToken'))
+              : (serverAuthCode ? 'serverAuthCode (not used for Firebase credential)' : 'none')),
+        });
+
+        if (!idToken) {
+          console.error('[Auth] Native Google sign-in response missing idToken', {
+            hasAccessToken: !!accessToken,
+            hasServerAuthCode: !!serverAuthCode,
+            nativeUser,
+          });
+          throw new Error("Google ID token not found");
+        }
+
+        const credential = GoogleAuthProvider.credential(idToken);
+        console.log("Firebase credential created");
+
+        let userCredential;
+        try {
+          userCredential = await signInWithCredential(auth, credential);
+        } catch (firebaseCredentialError) {
+          console.error('[Auth] Firebase signInWithCredential failed for native Google login:', firebaseCredentialError);
+          console.error('[Auth] Firebase signInWithCredential failure details', {
+            code: firebaseCredentialError?.code,
+            message: firebaseCredentialError?.message,
+            customData: firebaseCredentialError?.customData,
+          });
+          throw firebaseCredentialError;
+        }
+        console.log("Firebase signInWithCredential success");
+
+        const firebaseUser = userCredential.user;
+        const token = await firebaseUser.getIdToken();
+        console.log("Post-login Firestore/user logic started");
+        const finalizedUser = await finalizeGoogleAuth(firebaseUser, token);
+        console.log("Post-login Firestore/user logic success");
+        return finalizedUser;
+      }
+
+      console.log("Using web login");
+
       const provider = new GoogleAuthProvider();
+
       const userCredential = await signInWithPopup(auth, provider);
+      console.log("Google login response received", userCredential);
+
+      const webCredential = GoogleAuthProvider.credentialFromResult(userCredential);
+      const webIdToken = webCredential?.idToken || null;
+      console.log("ID token extracted", {
+        hasIdToken: !!webIdToken,
+        tokenSource: webIdToken ? 'credentialFromResult.idToken' : 'firebaseUser.getIdToken fallback',
+      });
+      console.log("Firebase credential created", {
+        mode: 'web',
+        via: 'signInWithPopup',
+      });
+      console.log("Firebase signInWithCredential success", {
+        mode: 'web',
+        via: 'signInWithPopup',
+      });
+
       const firebaseUser = userCredential.user;
       const token = await firebaseUser.getIdToken();
-      
-      // Check if user exists in Firestore
-      const userData = await checkUserExists(firebaseUser.uid);
-      
-      if (userData && userData.uid) {
-        // Existing user - just log them in
-        await updateUserLastLogin(firebaseUser.uid);
-        
-        const u = {
-          uid: userData.uid,
-          email: userData.email || firebaseUser.email,
-          phone: userData.phone || '',
-          name: userData.name || firebaseUser.displayName || '',
-          token,
-          profile_completed: userData.profile_completed
-        };
-        
-        localStorage.setItem("sfm_current_user", JSON.stringify(u));
-        localStorage.setItem("sfm_user_id_token", token);
-        setUser(u);
-        setShowLogin(false);
-        return u;
-      } else {
-        // New user - redirect to profile completion for name and phone
-        const newUserData = {
-          uid: firebaseUser.uid,
-          email: firebaseUser.email,
-          name: firebaseUser.displayName || '',
-          phone: '',
-          created_at: new Date().toISOString(),
-          last_login: new Date().toISOString(),
-          profile_completed: false
-        };
-        
-        await createUser(newUserData);
-        
-        // Store temp user for profile completion
-        localStorage.setItem("sfm_temp_user", JSON.stringify({
-          uid: newUserData.uid,
-          email: newUserData.email,
-          phone: '',
-          name: newUserData.name,
-          token,
-          needsProfileCompletion: true
-        }));
-        localStorage.setItem("sfm_user_id_token", token);
-        throw new Error("PROFILE_INCOMPLETE");
-      }
+
+      console.log("Post-login Firestore/user logic started");
+      const finalizedUser = await finalizeGoogleAuth(firebaseUser, token);
+      console.log("Post-login Firestore/user logic success");
+      return finalizedUser;
     } catch (error) {
+      console.error("Exact login error", error);
+      console.error("Google login full error:", error);
+      console.error("Error code:", error?.code);
+      console.error("Error message:", error?.message);
+      console.error("Error stack:", error?.stack);
+
       if (error.message === "PROFILE_INCOMPLETE") {
         throw error;
       }
+
+      if (isNativeAndroid) {
+        const nativeErrorText = String(error?.message || '').toLowerCase();
+        if (nativeErrorText.includes('cancel') || error?.code === '12501') {
+          throw new Error("Sign in cancelled");
+        }
+        throw new Error(error?.message || "Native Google sign in failed");
+      }
+
       if (error.code === 'auth/popup-closed-by-user') {
         throw new Error("Sign in cancelled");
       } else if (error.code === 'auth/popup-blocked') {
         throw new Error("Popup blocked. Please allow popups for this site.");
+      } else if (error.code === 'auth/cancelled-popup-request') {
+        throw new Error("Another sign in is already in progress. Please try again.");
+      } else if (error?.message?.toLowerCase?.().includes('cancel')) {
+        throw new Error("Sign in cancelled");
       }
       throw new Error(error.message || "Google sign in failed");
     }
-  }, []);
+  }, [finalizeGoogleAuth]);
 
   const signup = useCallback(async ({ email, name, password, role = "user", phone = "" }) => {
     const u = registerUser({ email, name, password, role, phone });
-    localStorage.setItem("sfm_current_user", JSON.stringify(u));
+    safeStorage.setJSON("sfm_current_user", u);
     setUser(u);
     setShowLogin(false);
     return u;
@@ -328,8 +540,8 @@ export function AuthProvider({ children }) {
             token
           };
           
-          localStorage.setItem("sfm_current_user", JSON.stringify(u));
-          localStorage.setItem("sfm_user_id_token", token);
+          safeStorage.setJSON("sfm_current_user", u);
+          safeStorage.set("sfm_user_id_token", token);
           setUser(u);
           setShowLogin(false);
           setOtpSessionStarted(false);
@@ -344,8 +556,8 @@ export function AuthProvider({ children }) {
             token,
             needsSignup: true
           };
-          localStorage.setItem("sfm_temp_user", JSON.stringify(tempUser));
-          localStorage.setItem("sfm_user_id_token", token);
+          safeStorage.setJSON("sfm_temp_user", tempUser);
+          safeStorage.set("sfm_user_id_token", token);
           setOtpSessionStarted(false);
           
           // Return special flag to indicate signup needed
@@ -368,15 +580,20 @@ export function AuthProvider({ children }) {
   }, [otpSessionStarted]);
 
   const logout = useCallback(async () => {
+    const isNativeAndroid = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+
     try {
+      if (isNativeAndroid) {
+        await GoogleAuth.signOut().catch(() => {});
+      }
       await auth.signOut();
       console.log('[Auth] Firebase sign out successful');
     } catch (error) {
       console.error('[Auth] Firebase sign out failed:', error);
     }
-    localStorage.removeItem('sfm_current_user');
-    localStorage.removeItem('sfm_user_id_token');
-    localStorage.removeItem('sfm_temp_user');
+    safeStorage.remove('sfm_current_user');
+    safeStorage.remove('sfm_user_id_token');
+    safeStorage.remove('sfm_temp_user');
     setUser(null);
   }, []);
 
