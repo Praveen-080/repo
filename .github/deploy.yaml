@@ -1,0 +1,57 @@
+name: Deploy Vite App to EC2
+
+on:
+	# Trigger deployment on pushes to main
+	push:
+		branches:
+			- main
+
+jobs:
+	deploy:
+		name: Build and Deploy
+		runs-on: ubuntu-latest
+
+		steps:
+			# Checkout the repository
+			- name: Checkout code
+				uses: actions/checkout@v4
+
+			# Setup Node.js 20 for Vite build
+			- name: Setup Node.js
+				uses: actions/setup-node@v4
+				with:
+					node-version: 20
+					cache: npm
+
+			# Install dependencies
+			- name: Install dependencies
+				run: npm install
+
+			# Build the Vite app for production
+			- name: Build
+				run: npm run build
+
+			# Upload the build output to EC2 using SCP
+			- name: Upload dist to EC2
+				uses: appleboy/scp-action@v0.1.7
+				with:
+					host: ${{ secrets.EC2_HOST }}
+					username: ${{ secrets.EC2_USER }}
+					key: ${{ secrets.EC2_SSH_KEY }}
+					source: "dist/*"
+					target: "/tmp/vite-dist"
+					strip_components: 1
+
+			# Replace existing site files and restart Nginx
+			- name: Deploy on EC2
+				uses: appleboy/ssh-action@v1.0.3
+				with:
+					host: ${{ secrets.EC2_HOST }}
+					username: ${{ secrets.EC2_USER }}
+					key: ${{ secrets.EC2_SSH_KEY }}
+					script: |
+						set -e
+						sudo rm -rf /var/www/html/*
+						sudo mkdir -p /var/www/html
+						sudo cp -r /tmp/vite-dist/* /var/www/html/
+						sudo systemctl restart nginx
