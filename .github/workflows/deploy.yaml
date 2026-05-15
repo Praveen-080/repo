@@ -1,7 +1,6 @@
 name: Deploy Vite App to EC2
 
 on:
-  # Trigger deployment on pushes to main
   push:
     branches:
       - main
@@ -15,26 +14,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout the repository
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Setup Node.js 20 for Vite build
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
-      # Install dependencies
       - name: Install dependencies
         run: npm ci
 
-      # Build the Vite app for production
+      - name: Create .env file
+        run: |
+          cat > .env << EOF
+          VITE_FIREBASE_API_KEY=${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN=${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID=${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET=${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID=${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID=${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_FIREBASE_MEASUREMENT_ID=${{ secrets.VITE_FIREBASE_MEASUREMENT_ID }}
+          EOF
+
       - name: Build
         run: npm run build
 
-      # Upload the build output to EC2 using SCP
       - name: Upload dist to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -45,7 +51,6 @@ jobs:
           target: "/tmp/vite-dist"
           strip_components: 1
 
-      # Replace existing site files and restart Nginx
       - name: Deploy on EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
